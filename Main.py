@@ -3,7 +3,6 @@ import os
 from PIL import Image
 from cefpython3 import cefpython as cef
 import requests
-import scrape
 import datetime
 import vlc
 from random import *
@@ -11,6 +10,8 @@ from web_widget import *
 import webbrowser
 from threading import Thread
 import logging as _logging
+from pymongo import MongoClient
+import json
 
 class App(customtkinter.CTk):
     def __init__(self):
@@ -21,23 +22,25 @@ class App(customtkinter.CTk):
 
         self.browser_frame = None
 
-        #character list for kantai 
-        self.char_list = ['Верный','Warspite','Kawakaze','Yura','Ark_Royal']
+        # Character list for kantai
+        self.char_list = ['Верный', 'Warspite', 'Kawakaze', 'Yura', 'Ark_Royal']
         self.char_pos = 0
         self.kantai_is_start = False
 
-        
-
-        # set grid layout 1x2
+        # Set grid layout 1x2
         self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(1, weight=1)
 
-        #check day of week and import anime list (0 is Monday)(month (1–12), day (1–31)).
+        self.second_frame = customtkinter.CTkFrame(self, corner_radius=0, fg_color="transparent")
+        self.third_frame = customtkinter.CTkFrame(self, corner_radius=0, fg_color="transparent")
+        self.mongodb_uri = self.load_mongodb_uri()
+
+        # Check day of week and import anime list
         self.day_of_week = datetime.date.today().weekday()
-        self.anime_list = scrape.get_anime("chs")
+        self.anime_list = self.get_anime_list_from_db()  # Fetch anime list from DB
         self.anime_next = self.upcoming_anime()
 
-        # load images with light and dark mode image
+        # Load images with light and dark mode image
         image_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "test_images")
         self.char_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "Characters")
         self.logo_image = customtkinter.CTkImage(Image.open(os.path.join(image_path, "CustomTkinter_logo_single.png")), size=(26, 26))
@@ -46,15 +49,15 @@ class App(customtkinter.CTk):
         self.home_image = customtkinter.CTkImage(light_image=Image.open(os.path.join(image_path, "home_dark.png")),
                                                  dark_image=Image.open(os.path.join(image_path, "home_light.png")), size=(20, 20))
         self.playlist_image = customtkinter.CTkImage(light_image=Image.open(os.path.join(image_path, "playlist_light.png")),
-                                                 dark_image=Image.open(os.path.join(image_path, "playlist_dark.png")), size=(20, 20))
+                                                     dark_image=Image.open(os.path.join(image_path, "playlist_dark.png")), size=(20, 20))
         self.holder_image = customtkinter.CTkImage(light_image=Image.open(os.path.join(image_path, "holder.png")),
-                                                 dark_image=Image.open(os.path.join(image_path, "holder.png")), size=(100, 20))
+                                                   dark_image=Image.open(os.path.join(image_path, "holder.png")), size=(100, 20))
         self.add_user_image = customtkinter.CTkImage(light_image=Image.open(os.path.join(image_path, "add_user_dark.png")),
                                                      dark_image=Image.open(os.path.join(image_path, "add_user_light.png")), size=(20, 20))
         self.anime_image = customtkinter.CTkImage(light_image=Image.open(os.path.join(image_path, "anime.png")),
-                                                 dark_image=Image.open(os.path.join(image_path, "anime.png")), size=(100, 100))
-    
-        # create navigation frame
+                                                  dark_image=Image.open(os.path.join(image_path, "anime.png")), size=(100, 100))
+
+        # Create navigation frame
         self.navigation_frame = customtkinter.CTkFrame(self, corner_radius=0)
         self.navigation_frame.grid(row=0, column=0, sticky="nsew")
         self.navigation_frame.grid_rowconfigure(4, weight=1)
@@ -82,69 +85,108 @@ class App(customtkinter.CTk):
                                                                 command=self.change_appearance_mode_event)
         self.appearance_mode_menu.grid(row=6, column=0, padx=20, pady=20, sticky="s")
 
-        # create home frame
+        # Create home frame
         self.home_frame = customtkinter.CTkFrame(self, corner_radius=0, fg_color="transparent")
         self.home_frame.grid_columnconfigure(0, weight=1)
 
-        self.clock_label = customtkinter.CTkLabel(self.home_frame,font=("Courier New", 15,'bold'), text='')
-        self.clock_label.grid(row=0, column=0,columnspan=2, padx=2, pady=10)
+        self.clock_label = customtkinter.CTkLabel(self.home_frame, font=("Courier New", 15, 'bold'), text='')
+        self.clock_label.grid(row=0, column=0, columnspan=2, padx=2, pady=10)
 
         self.home_frame_large_image_label = customtkinter.CTkLabel(self.home_frame, text="", image=self.large_test_image)
-        self.home_frame_large_image_label.grid(row=1, column=0,columnspan=2, padx=20, pady=10)
+        self.home_frame_large_image_label.grid(row=1, column=0, columnspan=2, padx=20, pady=10)
 
         self.home_button_1 = customtkinter.CTkButton(self.home_frame, text="Start Kantai",
-                                                     command = self.start_kantai)
+                                                     command=self.start_kantai)
         self.home_button_1.grid(row=2, column=0, padx=10, pady=10)
 
         self.home_button_2 = customtkinter.CTkButton(self.home_frame, text="Next Character",
-                                                     command = self.change_char)
-        self.home_button_2.grid(row=2, column=1, padx=10, pady=10) 
+                                                     command=self.change_char)
+        self.home_button_2.grid(row=2, column=1, padx=10, pady=10)
 
         self.home_buttons_frame = customtkinter.CTkScrollableFrame(self.home_frame, label_text="Anime List")
-        self.home_buttons_frame.grid(row=0, column=2, rowspan=3,padx=(20, 0), pady=(20, 0), sticky="nsew")
+        self.home_buttons_frame.grid(row=0, column=2, rowspan=3, padx=(20, 0), pady=(20, 0), sticky="nsew")
         self.home_buttons_frame.grid_columnconfigure(0, weight=1)
+        self.anime_next = self.upcoming_anime() if self.upcoming_anime() else {"name": "No upcoming anime", "image_url": ""}
 
-        self.upcoming_anime_btn = customtkinter.CTkButton(self.home_frame, text=self.anime_next[0],image=self.get_img(self.anime_next[3]),
-                                                     command = lambda:self.open_web(self.anime_next[0]))
-        self.upcoming_anime_btn.grid(row=3, column=2, padx=10, pady=10) 
-        thread1 = Thread(target = self.get_anime_list,args=())
+        self.upcoming_anime_btn = customtkinter.CTkButton(
+            self.home_frame,
+            text=self.anime_next["name"],
+            image=self.get_img(self.anime_next["image_url"]) if self.anime_next["image_url"] else None,
+            command=lambda: self.open_web(self.anime_next["name"])
+        )
+        self.upcoming_anime_btn.grid(row=3, column=2, padx=10, pady=10)
+        thread1 = Thread(target=self.get_anime_list_display, args=())
         thread1.start()
 
-        # create second frame
-        self.second_frame = customtkinter.CTkFrame(self, corner_radius=0, fg_color="transparent")
-        
-        # create third frame
-        self.third_frame = customtkinter.CTkFrame(self, corner_radius=0, fg_color="transparent")
-        # cef.Initialize()
-        # self.browser_frame = BrowserFrame(self.third_frame)
-        # self.browser_frame.grid(row=0, column=0)
-
-        # select default frame
+        # Select default frame
         self.select_frame_by_name("home")
         self.check_time()
-        #web(self.third_frame)
+
+    def load_mongodb_uri(self):
+        """Load MongoDB URI from config.json."""
+        try:
+            with open("config.json", "r") as file:
+                config = json.load(file)
+                return config.get("mongodb_uri")
+        except FileNotFoundError:
+            print("Error: config.json file not found.")
+        except json.JSONDecodeError:
+            print("Error: config.json contains invalid JSON.")
+        return None
+
+    def get_anime_list_from_db(self):
+        """Fetch anime list from the database, selecting only 'chs' or 'cht' translations."""
+        client = MongoClient(self.mongodb_uri)
+        db = client['anime_db']
+        collection = db['anime_collection']
+        
+        # Extract and transform the data, selecting only 'chs' or 'cht' translations
+        anime_list = []
+        for anime in collection.find({}):
+            for lang in ["chs", "cht"]:
+                details = anime.get("translations", {}).get(lang)
+                if details:
+                    anime_list.append({
+                        "name": details.get("name", "Unnamed Anime"),
+                        "day": details.get("day"),
+                        "time": details.get("time"),
+                        "timezone": details.get("timezone"),
+                        "image_url": details.get("image_url"),
+                        "language": lang
+                    })
+        return anime_list
+
 
     def upcoming_anime(self):
         current_time = datetime.datetime.now()
-        anime_today = [anime for anime in self.anime_list if anime[1] == self.day_of_week]
-        anime_tmr = [anime for anime in self.anime_list if anime[1] == (self.day_of_week+1)%7]
+        anime_today = [anime for anime in self.anime_list if anime.get('day') == self.day_of_week]
+        anime_tmr = [anime for anime in self.anime_list if anime.get('day') == (self.day_of_week + 1) % 7]
+        
         for anime in anime_today:
-            if int(anime[2].split(':')[0]) > current_time.hour: 
+            anime_hour, anime_minute = map(int, anime.get('time', '00:00').split(':'))
+            if anime_hour > current_time.hour or (anime_hour == current_time.hour and anime_minute >= current_time.minute):
                 return anime
-            elif int(anime[2].split(':')[0]) == current_time.hour:
-                if int(anime[2].split(':')[1]) >= current_time.minute: 
-                    return anime
-        return anime_tmr[0]
+        return anime_tmr[0] if anime_tmr else None
+
 
     def check_next_anime(self):
         temp = self.upcoming_anime()
-        if temp == self.anime_next:
-            pass
-        else:
+        if temp and temp != self.anime_next:
             self.anime_next = temp
-            self.upcoming_anime_btn.config(text=self.anime_next[0],image=self.get_img(self.anime_next[3]),
-                                            command = lambda:self.open_web(self.anime_next[0]))
-    
+            self.upcoming_anime_btn.config(text=self.anime_next['name'], image=self.get_img(self.anime_next['image_url']),
+                                           command=lambda: self.open_web(self.anime_next['name']))
+
+    def get_anime_list_display(self):
+        count = 0
+        self.anime_today = {}
+        for anime in self.anime_list:
+            if self.day_of_week == anime['day']:
+                self.anime_today[count] = customtkinter.CTkButton(self.home_buttons_frame, text=self.split_text(anime['name']),
+                                                                  image=self.get_img(anime['image_url']), compound="top",
+                                                                  command=lambda a=anime['name']: self.open_web(a))
+                self.anime_today[count].grid(row=count, column=0, padx=20, pady=10)
+                count += 1
+
     def change_char(self):
         if self.char_pos >= len(self.char_list)-1:
             self.char_pos-=len(self.char_list)-1
