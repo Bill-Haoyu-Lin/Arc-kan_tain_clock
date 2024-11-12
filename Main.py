@@ -12,6 +12,7 @@ from threading import Thread
 import logging as _logging
 from pymongo import MongoClient
 import json
+import pytz
 
 class App(customtkinter.CTk):
     def __init__(self):
@@ -112,7 +113,7 @@ class App(customtkinter.CTk):
 
         self.upcoming_anime_btn = customtkinter.CTkButton(
             self.home_frame,
-            text=self.anime_next["name"],
+            text=self.split_text(self.anime_next["name"]),
             image=self.get_img(self.anime_next["image_url"]) if self.anime_next["image_url"] else None,
             command=lambda: self.open_web(self.anime_next["name"])
         )
@@ -123,6 +124,32 @@ class App(customtkinter.CTk):
         # Select default frame
         self.select_frame_by_name("home")
         self.check_time()
+        
+    def to_local_time(self, anime_time, anime_timezone):
+        """Convert the anime's scheduled time to local time and adjust the day if needed."""
+        # Parse the anime's time
+        anime_hour, anime_minute = map(int, anime_time.split(':'))
+        
+        # Get the anime's timezone
+        anime_tz = pytz.timezone(anime_timezone)
+        
+        # Create a datetime object for today with the anime's time in its timezone
+        anime_datetime = datetime.datetime.now(anime_tz).replace(hour=anime_hour, minute=anime_minute, second=0, microsecond=0)
+        
+        # Convert to local timezone
+        local_time = anime_datetime.astimezone()  # Convert to the system's local timezone
+        
+        if anime_datetime.day != local_time.day:
+            if local_time < datetime.datetime.now(local_time.tzinfo).replace(hour=0, minute=0, second=0, microsecond=0):
+                # If local time is in the previous day, adjust forward by one day
+                local_time += datetime.timedelta(days=1)
+            else:
+                # If local time is in the next day, adjust back by one day
+                local_time -= datetime.timedelta(days=1)
+
+        return local_time
+
+
 
     def load_mongodb_uri(self):
         """Load MongoDB URI from config.json."""
@@ -137,45 +164,65 @@ class App(customtkinter.CTk):
         return None
 
     def get_anime_list_from_db(self):
-        """Fetch anime list from the database, selecting only 'chs' or 'cht' translations."""
+        """Fetch anime list from the database, converting scheduled times and days to local time."""
         client = MongoClient(self.mongodb_uri)
         db = client['anime_db']
         collection = db['anime_collection']
         
-        # Extract and transform the data, selecting only 'chs' or 'cht' translations
         anime_list = []
         for anime in collection.find({}):
             for lang in ["chs", "cht"]:
                 details = anime.get("translations", {}).get(lang)
                 if details:
+                    # Convert anime time to local time
+                    local_time = self.to_local_time(details.get("time", "00:00"), details.get("timezone", "UTC"))
+                    
+                    # Determine local day by comparing with anime's original day
+                    local_day = details.get("day", 0)  # Default to 0 (Monday) if no day is specified
+                    if local_time.date() > datetime.datetime.now().date():
+                        # If the local time is the next day, increment the day (wrap around using % 7)
+                        local_day = (local_day + 1) % 7
+                    elif local_time.date() < datetime.datetime.now().date():
+                        # If the local time is the previous day, decrement the day (wrap around using % 7)
+                        local_day = (local_day - 1) % 7
+
                     anime_list.append({
                         "name": details.get("name", "Unnamed Anime"),
-                        "day": details.get("day"),
-                        "time": details.get("time"),
+                        "day": local_day,
+                        "local_time": local_time.strftime('%H:%M'),  # Store the local time as a string
                         "timezone": details.get("timezone"),
                         "image_url": details.get("image_url"),
                         "language": lang
                     })
+       
         return anime_list
 
 
     def upcoming_anime(self):
-        current_time = datetime.datetime.now()
-        anime_today = [anime for anime in self.anime_list if anime.get('day') == self.day_of_week]
-        anime_tmr = [anime for anime in self.anime_list if anime.get('day') == (self.day_of_week + 1) % 7]
-        
-        for anime in anime_today:
-            anime_hour, anime_minute = map(int, anime.get('time', '00:00').split(':'))
-            if anime_hour > current_time.hour or (anime_hour == current_time.hour and anime_minute >= current_time.minute):
-                return anime
-        return anime_tmr[0] if anime_tmr else None
+        """Find the next upcoming anime scheduled for today or fallback to tomorrow, based on local time."""
+        current_time = datetime.datetime.now().time()  # Current local time
 
+        # Check for today's anime
+        anime_today = [anime for anime in self.anime_list if anime['day'] == self.day_of_week]
+        for anime in anime_today:
+            anime_hour, anime_minute = map(int, anime['local_time'].split(':'))
+            anime_time = datetime.time(anime_hour, anime_minute)
+            
+            # Compare the local times to find the next anime
+            if anime_time > current_time:
+                return anime
+        
+        # Fallback to the next day if no anime is left today
+        next_day = (self.day_of_week + 1) % 7
+        anime_next_day = [anime for anime in self.anime_list if anime['day'] == next_day]
+        return anime_next_day[0] if anime_next_day else None
 
     def check_next_anime(self):
         temp = self.upcoming_anime()
         if temp and temp != self.anime_next:
             self.anime_next = temp
-            self.upcoming_anime_btn.config(text=self.anime_next['name'], image=self.get_img(self.anime_next['image_url']),
+            self.upcoming_anime_btn.config(text=self.split_text(self.anime_next['name']), 
+                                           image=self.get_img(self.anime_next['image_url']),
                                            command=lambda: self.open_web(self.anime_next['name']))
 
     def get_anime_list_display(self):
@@ -329,7 +376,7 @@ class App(customtkinter.CTk):
             self.list_buttons[count].grid(row=count, column=0, padx=20, pady=10)
             count +=1
 
-    #genearate button list for anime of the day !!!! NEED TO chaneg to more general use
+    #genearate button list for anime of the day !!!! NEED TO change to more general use
     def get_anime_list(self):
         count = 0
         self.anime_today = dict()
