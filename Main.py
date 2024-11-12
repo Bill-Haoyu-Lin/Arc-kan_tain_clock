@@ -26,6 +26,8 @@ class App(customtkinter.CTk):
         self.char_list = ['Верный', 'Warspite', 'Kawakaze', 'Yura', 'Ark_Royal']
         self.char_pos = 0
         self.kantai_is_start = False
+        self.current_sound = None 
+        self.mongodb_uri = self.load_mongodb_uri()
 
         # Set grid layout 1x2
         self.grid_rowconfigure(0, weight=1)
@@ -33,7 +35,7 @@ class App(customtkinter.CTk):
 
         self.second_frame = customtkinter.CTkFrame(self, corner_radius=0, fg_color="transparent")
         self.third_frame = customtkinter.CTkFrame(self, corner_radius=0, fg_color="transparent")
-        self.mongodb_uri = self.load_mongodb_uri()
+        
 
         # Check day of week and import anime list
         self.day_of_week = datetime.date.today().weekday()
@@ -188,33 +190,29 @@ class App(customtkinter.CTk):
                 count += 1
 
     def change_char(self):
-        if self.char_pos >= len(self.char_list)-1:
-            self.char_pos-=len(self.char_list)-1
-        else:
-            self.char_pos+=1
+        """Switch to the next character, stopping any currently playing sound first."""
+        if self.current_sound:
+            self.current_sound.stop()  # Stop any current sound before playing the new one
 
-        #get correct size of image to be a square   
-        old_image = Image.open(os.path.join(self.char_path, self.get_cur_char()+".png" ))
+        # Cycle through characters
+        self.char_pos = (self.char_pos + 1) % len(self.char_list)
+        
+        # Update character image
+        old_image = Image.open(os.path.join(self.char_path, self.get_cur_char() + ".png"))
         im_size = old_image.size
-        if im_size[0]>im_size[1]:
-            new_w = im_size[0]
-            background = (new_w,new_w)
-            location = (0,int((new_w-im_size[1])/2))
-        else:
-            new_h = im_size[1]
-            background = (new_h,new_h)
-            location = (int((new_h-im_size[0])/2),0)
+        new_size = max(im_size)
+        background = (new_size, new_size)
+        location = ((new_size - im_size[0]) // 2, (new_size - im_size[1]) // 2)
         new_image = Image.new('RGBA', background, (0, 0, 0, 0))
-        new_image.paste(old_image,location )
-
-        #output image to update on home screen
+        new_image.paste(old_image, location)
+        
+        # Display the updated character image
         image_char = customtkinter.CTkImage(new_image, size=(200, 200))
         self.home_frame_large_image_label.configure(image=image_char)
 
+        # Play character intro sound if enabled
         if self.kantai_is_start:
-             self.play_sound("_Intro")
-        else:
-            pass
+            self.play_sound("_Intro")
 
     def switch_back_char(self):
          #get correct size of image to be a square   
@@ -237,28 +235,38 @@ class App(customtkinter.CTk):
 
     #Start or shut down kantain clock
     def start_kantai(self):
+        """Start or stop Kantai mode. Stop all sounds if Kantai mode is turned off."""
         self.kantai_is_start = not self.kantai_is_start
         if self.kantai_is_start:
+            # Play the start sound and update character image
             sound_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "Sounds")
-            sound = vlc.MediaPlayer(os.path.join(sound_path, "TitleCallA" + str(randint(1, 20)) + ".mp3"))
-            sound.play()
+            self.current_sound = vlc.MediaPlayer(os.path.join(sound_path, "TitleCallA" + str(randint(1, 20)) + ".mp3"))
+            self.current_sound.play()
             self.switch_back_char()
         else:
-            self.home_frame_large_image_label.configure(image=self.large_test_image)
-        self.home_button_1.configure(text="Start Kantai" if self.kantai_is_start==False else "Close Kantai")
+            # Stop all sounds if Kantai mode is turned off
+            if self.current_sound:
+                self.current_sound.stop()
+                self.current_sound = None  # Clear the current sound reference
+            self.home_frame_large_image_label.configure(image=self.large_test_image)  # Reset image if needed
+
+        # Update the button text based on the mode
+        self.home_button_1.configure(text="Start Kantai" if not self.kantai_is_start else "Close Kantai")
+
 
     #Get name of current character as string
     def get_cur_char(self):
         return  self.char_list[self.char_pos]
     
-    #Play Sound
-    def play_sound(self,keyword):
+    #play sound
+    def play_sound(self, keyword):
+        """Play a sound for the current character, ensuring only one sound is played at a time."""
         sound_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "Sounds")
         if self.kantai_is_start:
-            sound = vlc.MediaPlayer(os.path.join(sound_path, self.get_cur_char() + str(keyword) + ".mp3"))
-            sound.play()
-        else:
-            pass
+            if self.current_sound:
+                self.current_sound.stop()  # Stop any currently playing sound
+            self.current_sound = vlc.MediaPlayer(os.path.join(sound_path, self.get_cur_char() + keyword + ".mp3"))
+            self.current_sound.play()
     
     #Update Time based on current PC time on home screen        
     def check_time(self):
