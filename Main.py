@@ -125,29 +125,7 @@ class App(customtkinter.CTk):
         self.select_frame_by_name("home")
         self.check_time()
         
-    def to_local_time(self, anime_time, anime_timezone):
-        """Convert the anime's scheduled time to local time and adjust the day if needed."""
-        # Parse the anime's time
-        anime_hour, anime_minute = map(int, anime_time.split(':'))
-        
-        # Get the anime's timezone
-        anime_tz = pytz.timezone(anime_timezone)
-        
-        # Create a datetime object for today with the anime's time in its timezone
-        anime_datetime = datetime.datetime.now(anime_tz).replace(hour=anime_hour, minute=anime_minute, second=0, microsecond=0)
-        
-        # Convert to local timezone
-        local_time = anime_datetime.astimezone()  # Convert to the system's local timezone
-        
-        if anime_datetime.day != local_time.day:
-            if local_time < datetime.datetime.now(local_time.tzinfo).replace(hour=0, minute=0, second=0, microsecond=0):
-                # If local time is in the previous day, adjust forward by one day
-                local_time += datetime.timedelta(days=1)
-            else:
-                # If local time is in the next day, adjust back by one day
-                local_time -= datetime.timedelta(days=1)
 
-        return local_time
 
 
 
@@ -163,8 +141,28 @@ class App(customtkinter.CTk):
             print("Error: config.json contains invalid JSON.")
         return None
 
+    def to_local_time(self, anime_time, anime_timezone, date_of_week):
+        """Convert the anime's scheduled time and day to local time and day."""
+        # Parse the anime's time
+        anime_hour, anime_minute = map(int, anime_time.split(':'))
+        
+        # Get the anime's timezone
+        anime_tz = pytz.timezone(anime_timezone)
+        
+        # Create a datetime object for the given day of the week in the anime's timezone
+        anime_datetime = datetime.datetime.now(anime_tz).replace(
+            hour=anime_hour, minute=anime_minute, second=0, microsecond=0
+        )
+        anime_datetime += datetime.timedelta(days=abs(date_of_week - anime_datetime.weekday()) % 7)
+        
+        # Convert to local timezone
+        local_time = anime_datetime.astimezone()  # Convert to the system's local timezone
+        local_day = (date_of_week + (local_time.date() - anime_datetime.date()).days) % 7
+
+        return local_day, local_time.strftime('%H:%M')
+    
     def get_anime_list_from_db(self):
-        """Fetch anime list from the database, converting scheduled times and days to local time."""
+        """Fetch anime list from the database, converting scheduled times and days to local time and day."""
         client = MongoClient(self.mongodb_uri)
         db = client['anime_db']
         collection = db['anime_collection']
@@ -174,29 +172,24 @@ class App(customtkinter.CTk):
             for lang in ["chs", "cht"]:
                 details = anime.get("translations", {}).get(lang)
                 if details:
-                    # Convert anime time to local time
-                    local_time = self.to_local_time(details.get("time", "00:00"), details.get("timezone", "UTC"))
-                    
-                    # Determine local day by comparing with anime's original day
-                    local_day = details.get("day", 0)  # Default to 0 (Monday) if no day is specified
-                    if local_time.date() > datetime.datetime.now().date():
-                        # If the local time is the next day, increment the day (wrap around using % 7)
-                        local_day = (local_day + 1) % 7
-                    elif local_time.date() < datetime.datetime.now().date():
-                        # If the local time is the previous day, decrement the day (wrap around using % 7)
-                        local_day = (local_day - 1) % 7
-
+                    # Convert anime day and time to local values
+                    local_day, local_time = self.to_local_time(
+                        details.get("time", "00:00"),
+                        details.get("timezone", "UTC"),
+                        details.get("day", 0)  # Default to 0 (Monday) if no day is specified
+                    )
                     anime_list.append({
                         "name": details.get("name", "Unnamed Anime"),
-                        "day": local_day,
-                        "local_time": local_time.strftime('%H:%M'),  # Store the local time as a string
+                        "day": local_day,  # Local day of the week (0 = Monday, 6 = Sunday)
+                        "local_time": local_time,  # Local time as a string
                         "timezone": details.get("timezone"),
                         "image_url": details.get("image_url"),
                         "language": lang
                     })
-       
-        return anime_list
 
+        anime_list.sort(key=lambda x: (x["day"], x["local_time"]))  # Sort by day and time
+
+        return anime_list
 
     def upcoming_anime(self):
         """Find the next upcoming anime scheduled for today or fallback to tomorrow, based on local time."""
