@@ -212,7 +212,7 @@ class App(customtkinter.CTk):
 
     def check_next_anime(self):
         temp = self.upcoming_anime()
-        if temp and temp != self.anime_next:
+        if temp and (temp != self.anime_next):
             self.anime_next = temp
             self.upcoming_anime_btn.config(text=self.split_text(self.anime_next['name']), 
                                            image=self.get_img(self.anime_next['image_url']),
