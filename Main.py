@@ -214,7 +214,7 @@ class App(customtkinter.CTk):
         temp = self.upcoming_anime()
         if temp and (temp != self.anime_next):
             self.anime_next = temp
-            self.upcoming_anime_btn.config(text=self.split_text(self.anime_next['name']), 
+            self.upcoming_anime_btn.configure(text=self.split_text(self.anime_next['name']), 
                                            image=self.get_img(self.anime_next['image_url']),
                                            command=lambda: self.open_web(self.anime_next['name']))
 
