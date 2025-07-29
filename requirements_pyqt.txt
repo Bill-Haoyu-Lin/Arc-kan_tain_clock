@@ -1,0 +1,8 @@
+PyQt5==5.15.9
+PyQtWebEngine==5.15.6
+python-vlc==3.0.20123
+pygame==2.5.2
+requests==2.31.0
+pymongo==4.5.0
+pytz==2023.3
+Pillow==10.0.1 
