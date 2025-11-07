@@ -1,12 +1,11 @@
 import customtkinter
 import os
 from PIL import Image
-from cefpython3 import cefpython as cef
 import requests
 import datetime
 import vlc
 from random import *
-from web_widget import *
+ 
 import webbrowser
 from threading import Thread
 import logging as _logging
@@ -427,5 +426,4 @@ class App(customtkinter.CTk):
 if __name__ == "__main__":
     app = App()
     app.mainloop()
-    logger.debug("Main loop exited")
-    cef.Shutdown()
+    _logging.debug("Main loop exited")
